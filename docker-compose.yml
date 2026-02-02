@@ -1,0 +1,106 @@
+services:
+  db:
+    image: postgres:15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=mlops_db
+    ports:
+      - "5432:5432"
+    networks:
+      - mlops-net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - mlops-net
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    command: >
+      mlflow server --backend-store-uri postgresql://postgres:password@db/mlops_db --default-artifact-root /mlflow-artifacts --host 0.0.0.0 --port 5000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow-artifacts
+    networks:
+      - mlops-net
+
+  api:
+    build: .
+    command: >
+      bash -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 300"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - mlflow_data:/mlflow-artifacts
+    ports:
+      - "8000:8000"
+    environment:
+      - DOMAIN=localhost
+      - DATABASE_URL=postgresql://postgres:password@db/mlops_db
+      - REDIS_URL=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - API_PORT=8000
+      - USE_LOCAL_SERVICES=False
+      - PYTHONPATH=/app
+    networks:
+      - mlops-net
+
+  ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - API_HOST=api
+      - API_PORT=8000
+    depends_on:
+      - api
+    networks:
+      - mlops-net
+
+  worker:
+    build: .
+    command: python app/worker.py
+    volumes:
+      - .:/app
+      - mlflow_data:/mlflow-artifacts
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db/mlops_db
+      - REDIS_URL=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - USE_LOCAL_SERVICES=False
+      - PYTHONPATH=/app
+    networks:
+      - mlops-net
+
+volumes:
+  postgres_data:
+  mlflow_data:
+
+
+networks:
+  mlops-net:
+    driver: bridge
