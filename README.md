@@ -2,62 +2,81 @@
 
 ## 概要
 継続的なモデル作成・改善・運用を行うMLOpsアプリケーション。
-FastAPI (Backend), Streamlit (Frontend), PostgreSQL (Metadata), DuckDB/Parquet (Data), MLflow (Tracking), Redis/RQ (Jobs) を使用。
+データセット管理から特徴量エンジニアリング、モデル学習、実験管理までを一気通貫で提供します。
 
-## セットアップ
+## 主な機能
 
-1. 依存ライブラリのインストール
-```bash
-pip install -r requirements.txt
-```
+### 1. Dataset Management
+- **Upload**: CSV/Parquetファイルのアップロード
+- **Schema**: データ型の定義と確認 (Parquet形式で型安全に保存)
+- **Preview**: データのプレビュー確認
 
-2. 環境変数の設定
-`.env` ファイルを確認・編集してください。
-- `USE_LOCAL_SERVICES=True`: PostgreSQL/Redis不要で動作します (SQLite/Local MLflow使用)
-- `USE_LOCAL_SERVICES=False`: PostgreSQL/Redis/Remote MLflowを使用します
+### 2. Feature Store (特徴量エンジニアリング)
+- **Feature Builder**: 直感的なUIで特徴量を変換・生成
+  - Lag, Rolling Window, Difference (Diff)
+  - Group Aggregation (Mean, Max, Min, Std, Count)
+  - Scaling, Encoding, Formula, etc.
+- **Auto Generation**: 算術演算や多項式特徴量の自動生成
+- **Row Filtering**:
+  - 全体に対する行フィルタリング (条件指定)
+  - Schema定義に基づいた型安全なフィルタリング (数値・日付の自動型変換)
+- **Active Features**: 学習に使用する特徴量の選択管理
+- **Analysis**: 特徴量とターゲット変数の関連性を分析 (Mutual Info, Correlation)
 
-3. データベースマイグレーション
-```bash
-alembic upgrade head
-```
-(初回は `alembic/env.py` の設定を確認してください)
+### 3. Model Training & Management
+- **Experimentation**: LightGBMによるモデル学習
+- **Tracking**: MLflowを用いた実験パラメータとメトリクスのトラッキング
+- **Version Control**: 学習に使用したデータセットと特徴量セットのバージョン管理
 
-4. ミドルウェアの起動 (Docker 等)
-- PostgreSQL
-- Redis
-- MLflow (Local): `mlflow ui`
+## 技術スタック (Tech Stack)
 
-## 起動方法
+### Backend
+- **Framework**: FastAPI (Python)
+- **Data Processing**: Pandas, Arrow/Parquet
+- **ML**: LightGBM, Scikit-learn
+- **Database**: PostgreSQL (MySQL/SQLite compatible)
+- **Async Tasks**: Redis / RQ (Optional)
 
-### Docker (Recommended for Full Stack)
+### Frontend
+- **Framework**: Next.js (React)
+- **Language**: TypeScript
+- **Styling**: TailwindCSS, Shadcn/UI
+- **Visualization**: Recharts
+
+### Infrastructure
+- **Container**: Docker, Docker Compose
+
+## セットアップ & 起動
+
+### Docker (推奨)
+Full Stack (Backend + Frontend + DB + MLflow) を一括起動します。
+
 ```bash
 docker-compose up --build
 ```
-- API: http://localhost:8000/docs
-- UI: http://localhost:8501
-- MLflow: http://localhost:5000
-- Postgres/Redis are automatically provisioned.
 
-### Local Mode (Python)
-backend/frontend/worker separate start (see below).
+- **Frontend UI**: http://localhost:3000
+- **Backend API**: http://localhost:8000/docs
+- **MLflow UI**: http://localhost:5000
+
+### Local Development
+
+#### 1. Backend
 ```bash
+# 依存ライブラリ
+pip install -r requirements.txt
+
+# DB Migration
+alembic upgrade head
+
+# 起動
 uvicorn app.main:app --reload --port 8000
 ```
-Swagger UI: http://localhost:8000/docs
 
-### Frontend UI
+#### 2. Frontend
 ```bash
-streamlit run app/ui/dashboard.py --server.port 8501
+cd frontend
+npm install
+npm run dev
 ```
-UI: http://localhost:8501
-
-### Worker (Optional for Async Jobs)
-```bash
-python app/worker.py
-```
-
-## 使い方
-1. **Data Management**: CSVをアップロードしてDataset Versionを作成。
-2. **Feature Builder**: 特徴量変換ルールを定義し、Feature Setを作成。
-3. **Model Experiments**: Feature Setを選択して学習を実行。MLflowで実験を確認。
-4. **Inference**: 学習済みモデルIDを指定して予測を実行。
+アクセス: http://localhost:3000
