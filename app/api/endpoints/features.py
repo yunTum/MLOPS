@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.schemas import feature as schemas
@@ -238,7 +238,12 @@ def auto_generate_features(
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 @router.get("/sets/{id}/preview")
-def preview_feature_set(id: int, limit: int = 20, db: Session = Depends(get_db)):
+def preview_feature_set(
+    id: int, 
+    limit: int = 20, 
+    columns: List[str] = Query(None),
+    db: Session = Depends(get_db)
+):
     from app.core import storage
     fs = core_features.get_feature_set(db, id)
     if not fs:
@@ -271,8 +276,8 @@ def preview_feature_set(id: int, limit: int = 20, db: Session = Depends(get_db))
             
     try:
         # Use storage helper to read first N rows
-        print(f"DEBUG: Previewing feature set {id} at path: {path}")
-        df_head = storage.peek_parquet(path, n=limit)
+        print(f"DEBUG: Previewing feature set {id} at path: {path} with cols={columns}")
+        df_head = storage.peek_parquet(path, n=limit, columns=columns)
         
         # Convert to dict for JSON
         # Records format: [{"col1": val, "col2": val}, ...]
@@ -291,7 +296,10 @@ def preview_feature_set(id: int, limit: int = 20, db: Session = Depends(get_db))
             cleaned_row = {k: clean_val(v) for k, v in row.items()}
             cleaned_data.append(cleaned_row)
             
-        return {"data": cleaned_data}
+        return {
+            "data": cleaned_data, 
+            "columns": df_head.columns.tolist()
+        }
     except Exception as e:
         import traceback
         traceback.print_exc()

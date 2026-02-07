@@ -5,7 +5,6 @@ import api from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Plus, Loader2 } from "lucide-react"
 import { FeatureSetCard } from "@/components/features/FeatureSetCard"
-import { FeaturePreviewDialog } from "@/components/features/FeaturePreviewDialog"
 import { FeatureWorkflowDialog } from "@/components/features/FeatureWorkflowDialog"
 import { FeatureAnalysisDialog } from "@/components/features/FeatureAnalysisDialog"
 import { NewFeatureProjectDialog } from "@/components/features/NewFeatureProjectDialog"
@@ -19,10 +18,6 @@ export default function FeaturesPage() {
     // Analyze State
     const [analyzeFs, setAnalyzeFs] = useState<any | null>(null)
     const [isAnalyzeOpen, setIsAnalyzeOpen] = useState(false)
-
-    // View Details State
-    const [viewFs, setViewFs] = useState<any | null>(null)
-    const [isViewOpen, setIsViewOpen] = useState(false)
 
     // Edit State (Active Feature Set for Workflow)
     const [editFs, setEditFs] = useState<any | null>(null)
@@ -39,12 +34,6 @@ export default function FeaturesPage() {
         } catch (e) { console.error(e) } finally { setLoading(false) }
     }
 
-    const handleViewDetails = (fs: any) => {
-        setViewFs(fs)
-        setIsViewOpen(true)
-    }
-
-    // Opens the Analysis Dialog
     const handleAnalyze = (fs: any) => {
         setAnalyzeFs(fs)
         setIsAnalyzeOpen(true)
@@ -61,6 +50,7 @@ export default function FeaturesPage() {
         setIsNewProjectOpen(true)
     }
 
+    // Customize Delete
     const handleDelete = async (fs: any) => {
         // Use name if available, else standard fallback
         const name = fs.name || fs.version || `#${fs.id}`
@@ -91,7 +81,6 @@ export default function FeaturesPage() {
                         <FeatureSetCard
                             key={fs.id}
                             featureSet={fs}
-                            onView={handleViewDetails}
                             onEdit={handleEdit}
                             onAnalyze={handleAnalyze}
                             onDelete={handleDelete}
@@ -100,17 +89,13 @@ export default function FeaturesPage() {
                 </div>
             )}
 
-            <FeaturePreviewDialog
-                open={isViewOpen}
-                onOpenChange={setIsViewOpen}
-                featureSet={viewFs}
-            />
-
             <FeatureAnalysisDialog
                 open={isAnalyzeOpen}
                 onOpenChange={setIsAnalyzeOpen}
                 featureSet={analyzeFs}
             />
+
+
 
             <FeatureWorkflowDialog
                 open={isCreateOpen}

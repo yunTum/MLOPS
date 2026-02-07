@@ -7,7 +7,7 @@ from app.schemas import task as schemas
 
 router = APIRouter()
 
-@router.get("/", response_model=List[schemas.Task])
+@router.get("", response_model=List[schemas.Task])
 def read_tasks(
     db: Session = Depends(get_db),
     skip: int = 0,

@@ -186,13 +186,9 @@ export default function InferenceDatasetsPage() {
                         </div>
 
                         {selectedFeatureSetId && (() => {
-                            const selectedFS = featureSets.find(fs => fs.id.toString() === selectedFeatureSetId)
-                            if (!selectedFS) return null
-                            const hasLag = selectedFS.transformations?.some((t: any) => ['lag', 'diff', 'rolling'].includes(t.op))
-                            if (!hasLag) return null
-
+                            // Show Filter option always if Feature Set is selected
                             return (
-                                <div className="flex items-start space-x-2 border border-blue-100 bg-blue-50 p-3 rounded-md">
+                                <div className="flex items-start space-x-2 border border-blue-100 bg-blue-50 p-3 rounded-md mt-4">
                                     <Checkbox
                                         id="filterLatest"
                                         checked={filterLatest}
@@ -203,7 +199,8 @@ export default function InferenceDatasetsPage() {
                                             Filter by Latest Date
                                         </Label>
                                         <p className="text-xs text-blue-700">
-                                            Since this feature set uses time-series lags, checking this will filter the dataset to only include the most recent records (based on the sort column) after feature engineering.
+                                            Filter the dataset to only include the most recent records (based on the sort column) after feature engineering.
+                                            Recommended for daily inference to avoid predicting on historical data.
                                         </p>
                                     </div>
                                 </div>

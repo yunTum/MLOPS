@@ -19,7 +19,7 @@ export default function ModelsPage() {
 
     const fetchModels = async () => {
         try {
-            const res = await api.get('/models/')
+            const res = await api.get('/models')
             setModels(res.data)
         } catch (e) {
             console.error(e)

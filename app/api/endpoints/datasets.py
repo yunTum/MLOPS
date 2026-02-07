@@ -110,6 +110,21 @@ def get_version_preview(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/{dataset_id}/versions/{version_id}/unique_values")
+def get_version_unique_values(
+    dataset_id: int, 
+    version_id: int, 
+    column: str,
+    limit: int = 1000,
+    db: Session = Depends(get_db)
+):
+    try:
+        return core_dataset.get_unique_values(db, version_id, column, limit)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/versions/{version_id}")
 def delete_version(version_id: int, db: Session = Depends(get_db)):
     try:

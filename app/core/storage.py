@@ -55,15 +55,21 @@ def query_parquet_using_duckdb(query: str, parquet_path: str) -> pd.DataFrame:
     query = query.replace("target_table", f"'{parquet_path}'")
     return con.execute(query).df()
 
-def peek_parquet(path: str, n: int = 5) -> pd.DataFrame:
+def peek_parquet(path: str, n: int = 5, columns: list = None) -> pd.DataFrame:
     """
     Reads the first n rows of a Parquet file.
+    Optionally select specific columns.
     """
-    # Use DuckDB for efficient head limit if possible, or pyarrow
-    # fallback to pandas read_parquet generic
     try:
         con = get_duckdb_con()
-        query = f"SELECT * FROM '{path}' LIMIT {n}"
+        
+        if columns and len(columns) > 0:
+            # Simple sanitization: double quote cols
+            cols_str = ", ".join([f'"{c}"' for c in columns])
+            query = f"SELECT {cols_str} FROM '{path}' LIMIT {n}"
+        else:
+            query = f"SELECT * FROM '{path}' LIMIT {n}"
+            
         return con.execute(query).df()
     except Exception as e:
         print(f"DuckDB peek failed, falling back to pandas: {e}")

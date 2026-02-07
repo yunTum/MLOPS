@@ -8,14 +8,14 @@ settings = get_settings()
 app = FastAPI(title="MLOps Platform API")
 
 # Set all CORS enabled origins
-if settings.USE_LOCAL_SERVICES:
-    origins = ["*"]
-else:
-    origins = [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:8501", # Keep Streamlit for now
-    ]
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:8501",
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8501",
+]
 
 app.add_middleware(
     CORSMiddleware,

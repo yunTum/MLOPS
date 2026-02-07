@@ -239,3 +239,41 @@ def delete_dataset_version(db: Session, version_id: int):
     db.commit()
     return True
 
+def get_unique_values(db: Session, version_id: int, column: str, limit: int = 1000) -> list:
+    """
+    Get unique values for a column in a dataset version.
+    """
+    version = db.query(models.DatasetVersion).filter(models.DatasetVersion.id == version_id).first()
+    if not version:
+        raise ValueError("Version not found")
+        
+    if not version.path or not os.path.exists(version.path):
+         raise ValueError("File not found")
+
+    try:
+        # Read only the specific column
+        # Using pyarrow.parquet for efficiency if installed, otherwise pandas
+        # pd.read_parquet with columns argument is optimized.
+        df = pd.read_parquet(version.path, columns=[column])
+        
+        # Unique
+        uniques = df[column].dropna().unique()
+        
+        # Sort
+        try:
+            uniques.sort()
+        except:
+            pass # Mixed types might fail sort
+            
+        # Limit
+        if len(uniques) > limit:
+            return uniques[:limit].tolist()
+            
+        return uniques.tolist()
+    except Exception as e:
+        print(f"Error fetching unique values for {column}: {e}")
+        # Identify if column missing
+        if "not in" in str(e) or "not found" in str(e).lower():
+             raise ValueError(f"Column {column} not found in dataset")
+        raise e
+

@@ -42,7 +42,7 @@ export default function DatasetsPage() {
 
     const fetchDatasets = async () => {
         try {
-            const res = await api.get('/datasets/')
+            const res = await api.get('/datasets')
             setDatasets(res.data)
         } catch (error) {
             console.error(error)
@@ -55,7 +55,7 @@ export default function DatasetsPage() {
         if (!newName) return
         setIsSubmitting(true)
         try {
-            await api.post('/datasets/', { name: newName, description: newDesc })
+            await api.post('/datasets', { name: newName, description: newDesc })
             setIsCreateOpen(false)
             setNewName("")
             setNewDesc("")

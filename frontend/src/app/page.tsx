@@ -13,8 +13,8 @@ export default function Dashboard() {
     // Fetch Health
     api.get('/health').then(res => setHealth(res.data)).catch(console.error)
     // Fetch Stats (Mocked or real if endpoints exist)
-    api.get('/datasets/').then(res => setStats(prev => ({ ...prev, datasets: res.data.length }))).catch(console.error)
-    api.get('/models/').then(res => setStats(prev => ({ ...prev, models: res.data.length }))).catch(console.error)
+    api.get('/datasets').then(res => setStats(prev => ({ ...prev, datasets: res.data.length }))).catch(console.error)
+    api.get('/models').then(res => setStats(prev => ({ ...prev, models: res.data.length }))).catch(console.error)
   }, [])
 
   return (

@@ -39,7 +39,7 @@ export function NewFeatureProjectDialog({ open, onOpenChange, onSuccess }: NewFe
 
     const fetchDatasets = async () => {
         try {
-            const res = await api.get('/datasets/')
+            const res = await api.get('/datasets')
             setDatasets(res.data)
         } catch (e) { console.error(e) }
     }

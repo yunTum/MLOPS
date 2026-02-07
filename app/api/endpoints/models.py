@@ -89,6 +89,53 @@ def train_model_endpoint(
         print(f"TRAIN ERROR [Exception]: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/train/preview")
+def preview_training_data_endpoint(
+    request: schemas.ModelTrainRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview the training data (X and y) exactly as the trainer sees it.
+    """
+    try:
+        X, y = trainer.preview_training_data(
+            db, 
+            request.feature_set_id, 
+            request.target_col, 
+            request.features, 
+            request.params
+        )
+        
+        # Format
+        preview_df = X.head(100).copy()
+        if y is not None:
+            preview_df['__target__'] = y.head(100)
+            
+        import numpy as np
+        import pandas as pd
+        
+        def safe_serialize(val):
+            if pd.isna(val): return None
+            if isinstance(val, (np.int64, np.int32, np.int16, np.int8)): return int(val)
+            if isinstance(val, (np.float64, np.float32)): return float(val)
+            return str(val)
+
+        records = preview_df.to_dict(orient='records')
+        clean_records = [{k: safe_serialize(v) for k, v in r.items()} for r in records]
+
+        return {
+            "columns": list(X.columns) + (['__target__'] if y is not None else []),
+            "dtypes": {k: str(v) for k, v in X.dtypes.items()}, # Only X dtypes for now
+            "data": clean_records,
+            "shape_X": X.shape,
+            "shape_y": y.shape if y is not None else None
+        }
+    except Exception as e:
+        print(f"Preview Training Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("", response_model=List[schemas.Model])
 def list_models(db: Session = Depends(get_db)):
     from sqlalchemy.orm import joinedload

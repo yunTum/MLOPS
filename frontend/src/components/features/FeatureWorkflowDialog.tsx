@@ -4,7 +4,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button"
 import { Input, Label } from "@/components/ui/input"
 import { Select } from "@/components/ui/select-native"
-import { Plus, Loader2, Trash2, Wand2, ArrowRight, ArrowLeft, ChevronsRight, ChevronsLeft } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Plus, Loader2, Trash2, Wand2, ArrowRight, ArrowLeft, ChevronsRight, ChevronsLeft, List, Copy } from "lucide-react"
 import { FormulaBuilder } from "./FormulaBuilder"
 
 interface FeatureWorkflowDialogProps {
@@ -57,7 +58,25 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
     const [autoRightSelection, setAutoRightSelection] = useState<string[]>([])
 
     // Local copy of feature set to track updates (prevent stale overwrite)
+    // Local copy of feature set to track updates (prevent stale overwrite)
     const [currentFeatureSet, setCurrentFeatureSet] = useState<any>(null)
+
+    // Sub-feature: Unique Values for Filtering
+    const [uniqueValuesCache, setUniqueValuesCache] = useState<{ [key: string]: string[] }>({})
+
+    const fetchUniqueValues = async (col: string) => {
+        if (!col || uniqueValuesCache[col] || !selectedDatasetId || !selectedVersionId) return
+        try {
+            const res = await api.get(`/datasets/${selectedDatasetId}/versions/${selectedVersionId}/unique_values`, {
+                params: { column: col, limit: 200 }
+            })
+            setUniqueValuesCache(prev => ({ ...prev, [col]: res.data }))
+        } catch (e) {
+            console.error("Failed to fetch unique values", e)
+            // prevent infinite retry if error
+            setUniqueValuesCache(prev => ({ ...prev, [col]: [] }))
+        }
+    }
 
 
     // -- Effects --
@@ -110,7 +129,7 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
     // Load available datasets
     const fetchDatasets = async () => {
         try {
-            const res = await api.get('/datasets/')
+            const res = await api.get('/datasets')
             setDatasets(res.data)
         } catch (e) { console.error(e) }
     }
@@ -133,9 +152,14 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
             // Fetch from Feature Set Preview to get up-to-date columns
             api.get(`/features/sets/${targetFS.id}/preview?limit=1&t=${Date.now()}`)
                 .then(res => {
-                    console.log("Loaded columns:", Object.keys(res.data.data[0]))
-                    if (res.data.data && res.data.data.length > 0) {
-                        const cols = Object.keys(res.data.data[0])
+                    let cols: string[] = []
+                    if (res.data.columns && res.data.columns.length > 0) {
+                        cols = res.data.columns
+                    } else if (res.data.data && res.data.data.length > 0) {
+                        cols = Object.keys(res.data.data[0])
+                    }
+
+                    if (cols.length > 0) {
                         setColumns(cols)
 
                         // Default to ALL active features if:
@@ -312,13 +336,21 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
     const handleBuilderSubmit = async () => {
         if (!selectedVersionId) return
         setIsSubmitting(true)
-        const flatTransformations = pipelineSteps.flatMap(step =>
-            step.cols.map((col: string) => ({
+        const flatTransformations = pipelineSteps.flatMap(step => {
+            if (step.cols && step.cols.length === 0) {
+                // Return single op without col (e.g. global filter)
+                return [{
+                    op: step.op,
+                    col: null,
+                    ...step.args
+                }]
+            }
+            return (step.cols || []).map((col: string) => ({
                 op: step.op,
                 col: col,
                 ...step.args
             }))
-        )
+        })
         try {
             if (currentFeatureSet) {
                 await api.put(`/features/sets/${currentFeatureSet.id}`, {
@@ -340,6 +372,45 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
         finally { setIsSubmitting(false) }
     }
 
+    const handleDuplicate = async () => {
+        if (!selectedVersionId) return
+        if (!confirm("Create a COPY of this feature set?")) return
+        setIsSubmitting(true)
+        const flatTransformations = pipelineSteps.flatMap(step => {
+            if (step.cols && step.cols.length === 0) {
+                return [{
+                    op: step.op,
+                    col: null,
+                    ...step.args
+                }]
+            }
+            return (step.cols || []).map((col: string) => ({
+                op: step.op,
+                col: col,
+                ...step.args
+            }))
+        })
+        try {
+            const baseName = currentFeatureSet?.name || "Feature Set"
+            await api.post('/features/sets', {
+                name: `${baseName} (Copy)`,
+                description: currentFeatureSet?.description || undefined,
+                dataset_version_id: parseInt(selectedVersionId),
+                version: builderVersionTag ? `${builderVersionTag}-copy` : undefined,
+                transformations: flatTransformations
+            })
+            onSuccess()
+            onOpenChange(false)
+            alert("Feature Set Duplicated Successfully!")
+        } catch (e: any) {
+            const detail = e.response?.data?.detail
+            const msg = typeof detail === 'object' ? JSON.stringify(detail) : (detail || e.message)
+            alert("Failed: " + msg);
+            console.error(e)
+        }
+        finally { setIsSubmitting(false) }
+    }
+
     const handleSaveActiveFeatures = async () => {
         if (!currentFeatureSet) return
         setIsSubmitting(true)
@@ -348,13 +419,21 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
             // If pipelineSteps is empty (e.g. newly opened manage tab without builder init), we should rely on currentFeatureSet,
             // BUT we initialize pipelineSteps from editFeatureSet on open.
             // Let's use the same logic as handleBuilderSubmit to get flat transformations.
-            const flatTransformations = pipelineSteps.flatMap(step =>
-                step.cols.map((col: string) => ({
+            const flatTransformations = pipelineSteps.flatMap(step => {
+                if (step.cols && step.cols.length === 0) {
+                    // Return single op without col (e.g. global filter)
+                    return [{
+                        op: step.op,
+                        col: null,
+                        ...step.args
+                    }]
+                }
+                return (step.cols || []).map((col: string) => ({
                     op: step.op,
                     col: col,
                     ...step.args
                 }))
-            )
+            })
 
             await api.put(`/features/sets/${currentFeatureSet.id}`, {
                 name: currentFeatureSet.name,
@@ -834,9 +913,16 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
                                 </div>
                             </div>
 
-                            <Button className="w-full bg-purple-600 h-12 text-lg" onClick={handleBuilderSubmit} disabled={isSubmitting || !selectedVersionId || pipelineSteps.length === 0}>
-                                {isSubmitting && <Loader2 className="mr-2 h-5 w-5 animate-spin" />} {editFeatureSet ? "Update Feature Set" : "Create Feature Set"}
-                            </Button>
+                            <div className="flex gap-2">
+                                <Button className="flex-1 bg-purple-600 h-12 text-lg" onClick={handleBuilderSubmit} disabled={isSubmitting || !selectedVersionId || pipelineSteps.length === 0}>
+                                    {isSubmitting && <Loader2 className="mr-2 h-5 w-5 animate-spin" />} {editFeatureSet ? "Update Feature Set" : "Create Feature Set"}
+                                </Button>
+                                {editFeatureSet && (
+                                    <Button variant="outline" className="h-12 px-6 border-purple-200 text-purple-700 hover:bg-purple-50" onClick={handleDuplicate} disabled={isSubmitting}>
+                                        <Copy className="mr-2 h-5 w-5" /> Copy as New
+                                    </Button>
+                                )}
+                            </div>
                         </div>
                     )}
 
@@ -979,14 +1065,15 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
                                                 newSteps[existingFilterIdx] = { ...step, args: { ...step.args, conditions: newConditions } }
                                                 setPipelineSteps(newSteps)
                                             } else {
-                                                // Create new filter step at BEGINNING (usually best for filtering)
+                                                // Create new filter step at END (applied AFTER builder transformations)
+                                                // This allows filtering on newly created features
                                                 const newStep = {
                                                     id: Math.random().toString(36).substr(2, 9),
                                                     op: "filter",
                                                     cols: [],
                                                     args: { conditions: [{ col: columns[0], op: "eq", val: "" }] }
                                                 }
-                                                setPipelineSteps([newStep, ...pipelineSteps])
+                                                setPipelineSteps([...pipelineSteps, newStep])
                                             }
                                         }}
                                     >
@@ -1004,79 +1091,37 @@ export function FeatureWorkflowDialog({ open, onOpenChange, editFeatureSet, onSu
                                     return (
                                         <div className="space-y-2">
                                             {conditions.map((cond: any, idx: number) => (
-                                                <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded border border-orange-200">
-                                                    <Select
-                                                        className="h-8 text-xs w-32"
-                                                        value={cond.col}
-                                                        onChange={e => {
-                                                            const newSteps = [...pipelineSteps]
-                                                            const fIdx = newSteps.findIndex(s => s.op === "filter")
-                                                            if (fIdx >= 0) {
-                                                                const updatedConds = [...newSteps[fIdx].args.conditions]
-                                                                updatedConds[idx] = { ...updatedConds[idx], col: e.target.value }
-                                                                newSteps[fIdx].args.conditions = updatedConds
-                                                                setPipelineSteps(newSteps)
+                                                <FilterConditionRow
+                                                    key={idx}
+                                                    condition={cond}
+                                                    columns={columns}
+                                                    uniqueValues={uniqueValuesCache[cond.col] || []}
+                                                    onFetchUnique={() => fetchUniqueValues(cond.col)}
+                                                    onChange={(newCond: any) => {
+                                                        const newSteps = [...pipelineSteps]
+                                                        const fIdx = newSteps.findIndex(s => s.op === "filter")
+                                                        if (fIdx >= 0) {
+                                                            const updatedConds = [...newSteps[fIdx].args.conditions]
+                                                            updatedConds[idx] = newCond
+                                                            newSteps[fIdx].args.conditions = updatedConds
+                                                            setPipelineSteps(newSteps)
+                                                            // Trigger fetch if col changed
+                                                            if (newCond.col !== cond.col) {
+                                                                fetchUniqueValues(newCond.col)
                                                             }
-                                                        }}
-                                                    >
-                                                        {columns.map(c => <option key={c} value={c}>{c}</option>)}
-                                                    </Select>
-                                                    <Select
-                                                        className="h-8 text-xs w-24"
-                                                        value={cond.op}
-                                                        onChange={e => {
-                                                            const newSteps = [...pipelineSteps]
-                                                            const fIdx = newSteps.findIndex(s => s.op === "filter")
-                                                            if (fIdx >= 0) {
-                                                                const updatedConds = [...newSteps[fIdx].args.conditions]
-                                                                updatedConds[idx] = { ...updatedConds[idx], op: e.target.value }
-                                                                newSteps[fIdx].args.conditions = updatedConds
-                                                                setPipelineSteps(newSteps)
-                                                            }
-                                                        }}
-                                                    >
-                                                        <option value="eq">==</option>
-                                                        <option value="neq">!=</option>
-                                                        <option value="gt">&gt;</option>
-                                                        <option value="lt">&lt;</option>
-                                                        <option value="gte">&gt;=</option>
-                                                        <option value="lte">&lt;=</option>
-                                                        <option value="in">IN (csv)</option>
-                                                        <option value="not_in">NOT IN (csv)</option>
-                                                    </Select>
-                                                    <Input
-                                                        className="h-8 text-xs flex-1"
-                                                        placeholder="Value"
-                                                        value={cond.val}
-                                                        onChange={e => {
-                                                            const newSteps = [...pipelineSteps]
-                                                            const fIdx = newSteps.findIndex(s => s.op === "filter")
-                                                            if (fIdx >= 0) {
-                                                                const updatedConds = [...newSteps[fIdx].args.conditions]
-                                                                updatedConds[idx] = { ...updatedConds[idx], val: e.target.value }
-                                                                newSteps[fIdx].args.conditions = updatedConds
-                                                                setPipelineSteps(newSteps)
-                                                            }
-                                                        }}
-                                                    />
-                                                    <Button
-                                                        variant="ghost" size="sm" className="h-8 w-8 text-red-500 hover:text-red-700 p-0"
-                                                        onClick={() => {
-                                                            const newSteps = [...pipelineSteps]
-                                                            const fIdx = newSteps.findIndex(s => s.op === "filter")
-                                                            if (fIdx >= 0) {
-                                                                const updatedConds = newSteps[fIdx].args.conditions.filter((_: any, i: number) => i !== idx)
-                                                                newSteps[fIdx].args.conditions = updatedConds
-                                                                // If empty, maybe remove step? For now keeping it empty is fine
-                                                                if (updatedConds.length === 0) {
-                                                                    // Remove step completely to clean up
-                                                                    newSteps.splice(fIdx, 1)
-                                                                }
-                                                                setPipelineSteps(newSteps)
-                                                            }
-                                                        }}
-                                                    ><Trash2 className="h-4 w-4" /></Button>
-                                                </div>
+                                                        }
+                                                    }}
+                                                    onRemove={() => {
+                                                        const newSteps = [...pipelineSteps]
+                                                        const fIdx = newSteps.findIndex(s => s.op === "filter")
+                                                        if (fIdx >= 0) {
+                                                            const updatedConds = newSteps[fIdx].args.conditions.filter((_: any, i: number) => i !== idx)
+                                                            newSteps[fIdx].args.conditions = updatedConds
+                                                            if (updatedConds.length === 0) newSteps.splice(fIdx, 1)
+                                                            setPipelineSteps(newSteps)
+                                                        }
+                                                    }}
+                                                />
                                             ))}
                                         </div>
                                     )
@@ -1183,5 +1228,114 @@ const groupTransformations = (flat: any[]) => {
     })
     if (currentGroup) grouped.push(currentGroup)
     return grouped
+}
+
+// Sub-component for individual filter row to handle multi-select state
+function FilterConditionRow({ condition, columns, uniqueValues, onFetchUnique, onChange, onRemove }: any) {
+    const [isExpanded, setIsExpanded] = useState(false)
+    const isMulti = ["in", "not_in"].includes(condition.op)
+
+    // Parse current values for multi-select
+    const currentVals = isMulti
+        ? (condition.val || "").split(',').map((s: string) => s.trim()).filter((s: string) => s !== "")
+        : []
+
+    const toggleValue = (val: string) => {
+        let newVals
+        if (currentVals.includes(val)) {
+            newVals = currentVals.filter((v: string) => v !== val)
+        } else {
+            newVals = [...currentVals, val]
+        }
+        onChange({ ...condition, val: newVals.join(', ') })
+    }
+
+    return (
+        <div className="bg-white p-2 rounded border border-orange-200">
+            <div className="flex gap-2 items-center">
+                <Select
+                    className="h-8 text-xs w-32"
+                    value={condition.col}
+                    onChange={e => onChange({ ...condition, col: e.target.value })}
+                >
+                    {columns.map((c: string) => <option key={c} value={c}>{c}</option>)}
+                </Select>
+                <Select
+                    className="h-8 text-xs w-24"
+                    value={condition.op}
+                    onChange={e => onChange({ ...condition, op: e.target.value })}
+                >
+                    <option value="eq">==</option>
+                    <option value="neq">!=</option>
+                    <option value="gt">&gt;</option>
+                    <option value="lt">&lt;</option>
+                    <option value="gte">&gt;=</option>
+                    <option value="lte">&lt;=</option>
+                    <option value="in">IN (csv)</option>
+                    <option value="not_in">NOT IN (csv)</option>
+                </Select>
+
+                <div className="flex-1 relative">
+                    <Input
+                        className="h-8 text-xs w-full"
+                        placeholder={isMulti ? "val1, val2..." : "Value"}
+                        value={condition.val}
+                        list={!isMulti ? `list-${condition.col}` : undefined}
+                        onFocus={() => {
+                            onFetchUnique()
+                            if (isMulti) setIsExpanded(true)
+                        }}
+                        onChange={e => onChange({ ...condition, val: e.target.value })}
+                    />
+                    {!isMulti && (
+                        <datalist id={`list-${condition.col}`}>
+                            {uniqueValues.map((v: string) => <option key={v} value={v} />)}
+                        </datalist>
+                    )}
+                </div>
+
+                {isMulti && (
+                    <Button
+                        variant={isExpanded ? "secondary" : "ghost"}
+                        size="sm"
+                        className="h-8 w-8 p-0 border"
+                        onClick={() => {
+                            if (!isExpanded) onFetchUnique()
+                            setIsExpanded(!isExpanded)
+                        }}
+                        title="Select Values"
+                    >
+                        <List className="h-4 w-4" />
+                    </Button>
+                )}
+
+                <Button
+                    variant="ghost" size="sm" className="h-8 w-8 text-red-500 hover:text-red-700 p-0"
+                    onClick={onRemove}
+                ><Trash2 className="h-4 w-4" /></Button>
+            </div>
+
+            {isMulti && isExpanded && (
+                <div className="mt-2 border rounded max-h-40 overflow-y-auto p-2 bg-slate-50 grid grid-cols-2 gap-2">
+                    {uniqueValues.length === 0 && <p className="text-xs text-slate-400 col-span-2 text-center">No suggestions found (or loading...)</p>}
+                    {uniqueValues.map((v: string) => (
+                        <div key={v} className="flex items-center space-x-2">
+                            <Checkbox
+                                id={`chk-${v}`}
+                                checked={currentVals.includes(v)}
+                                onChange={() => toggleValue(v)}
+                            />
+                            <label
+                                htmlFor={`chk-${v}`}
+                                className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                            >
+                                {v}
+                            </label>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
 }
 

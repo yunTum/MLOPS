@@ -1,16 +1,17 @@
+import { useRouter } from "next/navigation"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, BarChart3, Eye } from "lucide-react"
 
 interface FeatureSetCardProps {
     featureSet: any
-    onView: (fs: any) => void
     onEdit: (fs: any) => void
     onAnalyze: (fs: any) => void
     onDelete: (fs: any) => void
 }
 
-export function FeatureSetCard({ featureSet, onView, onEdit, onAnalyze, onDelete }: FeatureSetCardProps) {
+export function FeatureSetCard({ featureSet, onEdit, onAnalyze, onDelete }: FeatureSetCardProps) {
+    const router = useRouter()
     return (
         <Card className="hover:border-purple-300 transition-all group relative">
             <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
@@ -24,7 +25,7 @@ export function FeatureSetCard({ featureSet, onView, onEdit, onAnalyze, onDelete
                         </p>
                     </div>
                     <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => onView(featureSet)} title="Preview Data">
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-50" onClick={() => router.push(`/features/${featureSet.id}/preview`)} title="Preview Data">
                             <Eye className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-amber-500 hover:text-amber-700 hover:bg-amber-50" onClick={() => onAnalyze(featureSet)} title="Analyze Relevance">

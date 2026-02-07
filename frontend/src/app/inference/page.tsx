@@ -5,12 +5,11 @@ import api from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { Play, Loader2, BrainCircuit, Upload, FileText, Download, Check, Wand2, Trash2, Columns, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
-import { Input } from "@/components/ui/input"
+import { Loader2, BrainCircuit, FileText, Download, Wand2, Trash2, Columns, ArrowUp, ArrowDown, ArrowUpDown, Play } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import Link from "next/link"
+import { ClusterDistributionChart } from "@/components/inference/ClusterDistributionChart"
 
 export default function InferencePage() {
     const [models, setModels] = useState<any[]>([])
@@ -21,13 +20,13 @@ export default function InferencePage() {
     // Prediction State
     const [inferenceDatasets, setInferenceDatasets] = useState<any[]>([])
     const [selectedInferenceDatasetId, setSelectedInferenceDatasetId] = useState<string>("")
-    const [predictFile, setPredictFile] = useState<File | null>(null) // Deprecated but keeping for fallback if needed, or remove? Plan said "Replace". Let's removing file upload from Predict tab.
     const [results, setResults] = useState<any[] | null>(null)
     const [predictLoading, setPredictLoading] = useState(false)
 
-    // Preparation State
-    const [prepFile, setPrepFile] = useState<File | null>(null)
-    const [prepLoading, setPrepLoading] = useState(false)
+    // Preview State
+    const [previewLoading, setPreviewLoading] = useState(false)
+    const [previewData, setPreviewData] = useState<any>(null)
+    const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
 
     const [loadingData, setLoadingData] = useState(true)
 
@@ -35,57 +34,23 @@ export default function InferencePage() {
     const [visibleColumns, setVisibleColumns] = useState<string[]>([])
     const [colDialogOpen, setColDialogOpen] = useState(false)
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
-
-    const sortedResults = results ? [...results].sort((a, b) => {
-        if (!sortConfig) return 0;
-        const { key, direction } = sortConfig;
-
-        const valA = a[key] ?? "";
-        const valB = b[key] ?? "";
-
-        // Check for numbers
-        const numA = Number(valA);
-        const numB = Number(valB);
-
-        if (!isNaN(numA) && !isNaN(numB)) {
-            return direction === 'asc' ? numA - numB : numB - numA;
-        }
-
-        // String compare
-        const strA = String(valA).toLowerCase();
-        const strB = String(valB).toLowerCase();
-
-        if (strA < strB) return direction === 'asc' ? -1 : 1;
-        if (strA > strB) return direction === 'asc' ? 1 : -1;
-        return 0;
-    }) : []
-
-    const handleSort = (key: string) => {
-        setSortConfig(current => {
-            if (current?.key === key) {
-                return current.direction === 'asc' ? { key, direction: 'desc' } : null; // Toggle Asc -> Desc -> None
-            }
-            return { key, direction: 'asc' };
-        });
-    }
-
-    const compatibleDatasets = selectedModel
-        ? inferenceDatasets.filter(d => d.feature_set_id === selectedModel.feature_set_id)
-        : []
+    const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
         const fetchData = async () => {
             try {
                 const [modelsRes, fsRes, dsRes] = await Promise.all([
-                    api.get('/models/'),
+                    api.get('/models'),
                     api.get('/features/sets'),
                     api.get('/inference/datasets')
                 ])
                 setModels(modelsRes.data)
                 setFeatureSets(fsRes.data)
                 setInferenceDatasets(dsRes.data)
-            } catch (err) {
+                setError(null)
+            } catch (err: any) {
                 console.error("Failed to fetch data", err)
+                setError(err.message || "Failed to load data")
             } finally {
                 setLoadingData(false)
             }
@@ -93,19 +58,11 @@ export default function InferencePage() {
         fetchData()
     }, [])
 
-    // --- Prediction Logic ---
     const handleModelSelect = (modelId: string) => {
         const model = models.find(m => m.id.toString() === modelId)
         setSelectedModel(model)
         setResults(null)
         setSelectedInferenceDatasetId("")
-    }
-
-    const handlePredictFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setPredictFile(e.target.files[0])
-            setResults(null)
-        }
     }
 
     const handleBatchPredict = async () => {
@@ -117,10 +74,9 @@ export default function InferencePage() {
             const formData = new FormData()
             formData.append('model_id', selectedModel.id)
             formData.append('inference_dataset_id', selectedInferenceDatasetId)
-            // No file appended
 
             const res = await api.post('/inference/batch_predict', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' } // axios handles standard formdata, correct header usually implies boundary but let's try standard.
+                headers: { 'Content-Type': 'multipart/form-data' }
             })
             setResults(res.data)
             if (res.data && res.data.length > 0) {
@@ -131,6 +87,29 @@ export default function InferencePage() {
             alert(e.response?.data?.detail || "Batch prediction failed.")
         } finally {
             setPredictLoading(false)
+        }
+    }
+
+    const handlePreviewInput = async () => {
+        if (!selectedModel || !selectedInferenceDatasetId) return
+
+        setPreviewLoading(true)
+        setPreviewData(null)
+        try {
+            const formData = new FormData()
+            formData.append('model_id', selectedModel.id)
+            formData.append('inference_dataset_id', selectedInferenceDatasetId)
+
+            const res = await api.post('/inference/preview_input', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            })
+            setPreviewData(res.data)
+            setPreviewDialogOpen(true)
+        } catch (e: any) {
+            console.error(e)
+            alert(e.response?.data?.detail || "Preview failed.")
+        } finally {
+            setPreviewLoading(false)
         }
     }
 
@@ -151,44 +130,6 @@ export default function InferencePage() {
         document.body.removeChild(link)
     }
 
-    // --- Preparation Logic ---
-    const handlePrepFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setPrepFile(e.target.files[0])
-        }
-    }
-
-    const handlePrepareData = async () => {
-        if (!selectedFeatureSet || !prepFile) return
-
-        setPrepLoading(true)
-        try {
-            const formData = new FormData()
-            formData.append('feature_set_id', selectedFeatureSet.id)
-            formData.append('file', prepFile)
-
-            // Changed: Not blob anymore, returns JSON object with ID
-            const res = await api.post('/inference/prepare_data', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            })
-
-            alert(`Data processed and saved as "${res.data.name}" (ID: ${res.data.id})`)
-
-            // Refresh list
-            const dsRes = await api.get('/inference/datasets')
-            setInferenceDatasets(dsRes.data)
-
-            // Switch to predict tab or just clear?
-            setPrepFile(null)
-
-        } catch (e: any) {
-            console.error("Prep failed", e)
-            alert(e.response?.data?.detail || "Data preparation failed.")
-        } finally {
-            setPrepLoading(false)
-        }
-    }
-
     const handleDeleteDataset = async () => {
         if (!selectedInferenceDatasetId) return
         if (!confirm("Are you sure you want to delete this dataset?")) return
@@ -203,6 +144,36 @@ export default function InferencePage() {
         }
     }
 
+    const sortedResults = results ? [...results].sort((a, b) => {
+        if (!sortConfig) return 0;
+        const { key, direction } = sortConfig;
+        const valA = a[key] ?? "";
+        const valB = b[key] ?? "";
+        const numA = Number(valA);
+        const numB = Number(valB);
+        if (!isNaN(numA) && !isNaN(numB)) {
+            return direction === 'asc' ? numA - numB : numB - numA;
+        }
+        const strA = String(valA).toLowerCase();
+        const strB = String(valB).toLowerCase();
+        if (strA < strB) return direction === 'asc' ? -1 : 1;
+        if (strA > strB) return direction === 'asc' ? 1 : -1;
+        return 0;
+    }) : []
+
+    const handleSort = (key: string) => {
+        setSortConfig(current => {
+            if (current?.key === key) {
+                return current.direction === 'asc' ? { key, direction: 'desc' } : null;
+            }
+            return { key, direction: 'asc' };
+        });
+    }
+
+    const compatibleDatasets = selectedModel
+        ? inferenceDatasets.filter(d => d.feature_set_id === selectedModel.feature_set_id)
+        : []
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -216,6 +187,22 @@ export default function InferencePage() {
                     </Button>
                 </Link>
             </div>
+
+            {
+                error && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative" role="alert">
+                        <strong className="font-bold">Error: </strong>
+                        <span className="block sm:inline">{error}</span>
+                    </div>
+                )
+            }
+
+            {/* Analysis Charts for Clustering */}
+            {
+                results && selectedModel?.parameters?.objective === 'clustering' && (
+                    <ClusterDistributionChart data={results} predictionCol="prediction" />
+                )
+            }
 
             <div className="grid gap-6 md:grid-cols-3">
                 <div className="md:col-span-1 space-y-6">
@@ -257,7 +244,6 @@ export default function InferencePage() {
                         </CardContent>
                     </Card>
 
-                    {/* Dataset Selection Card */}
                     {selectedModel && (
                         <Card>
                             <CardHeader>
@@ -300,28 +286,79 @@ export default function InferencePage() {
                                     </Select>
 
                                     {selectedInferenceDatasetId && (
-                                        <p className="text-xs text-slate-500">
-                                            {inferenceDatasets.find(d => d.id.toString() === selectedInferenceDatasetId)?.created_at}
-                                        </p>
+                                        <div className="flex justify-between items-center">
+                                            <p className="text-xs text-slate-500">
+                                                {inferenceDatasets.find(d => d.id.toString() === selectedInferenceDatasetId)?.created_at}
+                                            </p>
+                                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500" onClick={handleDeleteDataset}>
+                                                <Trash2 className="h-3 w-3" />
+                                            </Button>
+                                        </div>
                                     )}
                                 </div>
-
-                                <Button
-                                    className="w-full bg-blue-600 hover:bg-blue-700"
-                                    onClick={handleBatchPredict}
-                                    disabled={predictLoading || !selectedInferenceDatasetId}
-                                >
-                                    {predictLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                                    Run Prediction
-                                </Button>
+                                <div className="flex gap-2">
+                                    <Button
+                                        className="flex-1 bg-blue-600 hover:bg-blue-700"
+                                        onClick={handleBatchPredict}
+                                        disabled={predictLoading || !selectedInferenceDatasetId}
+                                    >
+                                        {predictLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                                        Run Prediction
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={handlePreviewInput}
+                                        disabled={previewLoading || !selectedInferenceDatasetId}
+                                        title="Preview Model Input"
+                                    >
+                                        {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Columns className="h-4 w-4" />}
+                                    </Button>
+                                </div>
                             </CardContent>
                         </Card>
                     )}
                 </div>
 
                 <div className="md:col-span-2">
-                    {/* Results Table */}
-                    {results ? (
+                    <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+                        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+                            <DialogHeader>
+                                <DialogTitle>Model Input Preview</DialogTitle>
+                                <DialogDescription>
+                                    Exact data passed to model (after transformations & encoding).
+                                    Shape: {previewData?.shape ? `(${previewData.shape[0]} rows, ${previewData.shape[1]} cols)` : 'N/A'}
+                                </DialogDescription>
+                            </DialogHeader>
+                            {previewData && (
+                                <div className="flex-1 overflow-auto border rounded mt-4">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-slate-100 uppercase font-semibold sticky top-0">
+                                            <tr>
+                                                <th className="px-2 py-1">Row</th>
+                                                {previewData.columns.map((col: string) => (
+                                                    <th key={col} className="px-2 py-1 whitespace-nowrap border-l">{col} <span className="text-[10px] text-slate-400 block font-normal">{previewData.dtypes[col]}</span></th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {previewData.data.map((row: any, i: number) => (
+                                                <tr key={i} className="border-t hover:bg-slate-50">
+                                                    <td className="px-2 py-1 font-mono text-slate-400 border-r">{i}</td>
+                                                    {previewData.columns.map((col: string) => (
+                                                        <td key={col} className="px-2 py-1 whitespace-nowrap border-r font-mono">
+                                                            {row[col] === null ? <span className="text-red-300">Null</span> : String(row[col])}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </DialogContent>
+                    </Dialog>
+
+                    {results && (
                         <Card>
                             <CardHeader className="flex flex-row items-center justify-between">
                                 <div>
@@ -377,7 +414,6 @@ export default function InferencePage() {
                                 </div>
                             </CardContent>
 
-                            {/* Column Selection Dialog */}
                             <Dialog open={colDialogOpen} onOpenChange={setColDialogOpen}>
                                 <DialogContent className="max-w-md">
                                     <DialogHeader>
@@ -412,7 +448,9 @@ export default function InferencePage() {
                                 </DialogContent>
                             </Dialog>
                         </Card>
-                    ) : (
+                    )}
+
+                    {!results && (
                         <div className="flex h-full items-center justify-center border-2 border-dashed rounded-lg p-12 text-slate-300">
                             <div className="text-center">
                                 <Play className="mx-auto h-12 w-12 mb-4 opacity-50" />
@@ -422,6 +460,6 @@ export default function InferencePage() {
                     )}
                 </div>
             </div>
-        </div>
+        </div >
     )
 }

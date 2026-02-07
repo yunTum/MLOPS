@@ -72,7 +72,18 @@ async def batch_predict(
             raise HTTPException(status_code=400, detail="Either inference_dataset_id or file must be provided")
 
         # 2. Predict
-        predictions = predictor.predict_batch(db, model_id, df)
+        skip_transform = False
+        if inference_dataset_id:
+             model_rec = db.query(models.Model).filter(models.Model.id == model_id).first()
+             # dataset variable is available from Step 1 block if inference_dataset_id was True
+             # We need to make sure 'dataset' is in scope.
+             # In Step 1: if inference_dataset_id: dataset = ...
+             # So it is available.
+             if model_rec and dataset and model_rec.feature_set_id == dataset.feature_set_id:
+                  print("DEBUG: Skipping transformation (Dataset already transformed)")
+                  skip_transform = True
+
+        predictions = predictor.predict_batch(db, model_id, df, skip_transform=skip_transform)
         
         # 3. Append predictions
         df['prediction'] = predictions
@@ -120,7 +131,16 @@ async def prepare_data(
     try:
         # 2. Load New CSV
         contents = await file.read()
-        df_new = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        try:
+            decoded = contents.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                decoded = contents.decode('cp932')
+            except UnicodeDecodeError:
+                # Fallback or fail
+                decoded = contents.decode('shift_jis', errors='replace')
+        
+        df_new = pd.read_csv(io.StringIO(decoded))
         df_new['_is_inference'] = True # Marker
 
         # 2.1 Validate Required Columns
@@ -161,42 +181,46 @@ async def prepare_data(
                 # If it's an ID or Venue, it MUST be in source.
                 pass 
 
-        # 2.5 Load History (Training Data) for Lag Context
-        # Check if fs has dataset_version
+        # 2.5 Load History (Traiing Data) - DISABLED to prevent Leakage
+        # User is responsible for providing necessary history in the upload file.
         df_combined = df_new
-        if fs.dataset_version_id:
-             ds_version = db.query(models.DatasetVersion).filter(models.DatasetVersion.id == fs.dataset_version_id).first()
-             if ds_version and ds_version.path and os.path.exists(ds_version.path):
-                 try:
-                     print(f"DEBUG: Loading history from {ds_version.path}")
-                     df_history = storage.load_parquet_to_dataframe(ds_version.path)
-                     df_history['_is_inference'] = False
+        
+        # History loading logic removed at user request.
+        # if fs.dataset_version_id and not filter_latest:
+        #      # Load history only if we are NOT filtering (Use Case: Single row prediction needing DB history).
+        #      # If filter_latest is True, we assume User provided history in the CSV and wants to avoid DB Leakage.
+        #      ds_version = db.query(models.DatasetVersion).filter(models.DatasetVersion.id == fs.dataset_version_id).first()
+        #      if ds_version and ds_version.path and os.path.exists(ds_version.path):
+        #          try:
+        #              print(f"DEBUG: Loading history from {ds_version.path}")
+        #              df_history = storage.load_parquet_to_dataframe(ds_version.path)
+        #              df_history['_is_inference'] = False
                      
-                     # Align Types: Cast new data to match history where possible
-                     for col in df_new.columns:
-                         if col in df_history.columns:
-                             target_dtype = df_history[col].dtype
-                             if df_new[col].dtype != target_dtype:
-                                 try:
-                                     # Special handling for Int64 (nullable int) vs int64/float
-                                     if "int" in str(target_dtype).lower():
-                                         df_new[col] = pd.to_numeric(df_new[col], errors='coerce').astype(target_dtype)
-                                     elif "float" in str(target_dtype).lower():
-                                         df_new[col] = pd.to_numeric(df_new[col], errors='coerce').astype(target_dtype)
-                                     elif pd.api.types.is_datetime64_any_dtype(target_dtype) or "datetime" in str(target_dtype):
-                                         # Handle "20260101" (int) -> "20260101" (str) -> datetime
-                                         # If we just cast int to datetime directly, it thinks it is ns from epoch.
-                                         df_new[col] = pd.to_datetime(df_new[col].astype(str), errors='coerce')
-                                     else:
-                                         df_new[col] = df_new[col].astype(target_dtype)
-                                 except Exception as ex:
-                                     print(f"WARNING: Type alignment failed for {col}: {ex}")
+        #              # Align Types: Cast new data to match history where possible
+        #              for col in df_new.columns:
+        #                  if col in df_history.columns:
+        #                      target_dtype = df_history[col].dtype
+        #                      if df_new[col].dtype != target_dtype:
+        #                          try:
+        #                              # Special handling for Int64 (nullable int) vs int64/float
+        #                              if "int" in str(target_dtype).lower():
+        #                                  df_new[col] = pd.to_numeric(df_new[col], errors='coerce').astype(target_dtype)
+        #                              elif "float" in str(target_dtype).lower():
+        #                                  df_new[col] = pd.to_numeric(df_new[col], errors='coerce').astype(target_dtype)
+        #                              elif pd.api.types.is_datetime64_any_dtype(target_dtype) or "datetime" in str(target_dtype):
+        #                                  # Handle "20260101" (int) -> "20260101" (str) -> datetime
+        #                                  # If we just cast int to datetime directly, it thinks it is ns from epoch.
+        #                                  df_new[col] = pd.to_datetime(df_new[col].astype(str), errors='coerce')
+        #                              else:
+        #                                  df_new[col] = df_new[col].astype(target_dtype)
+        #                          except Exception as ex:
+        #                              print(f"WARNING: Type alignment failed for {col}: {ex}")
 
-                     # Concat
-                     df_combined = pd.concat([df_history, df_new], axis=0, ignore_index=True)
-                     print(f"DEBUG: Combined History ({len(df_history)}) + New ({len(df_new)}) = {len(df_combined)}")
-                 except Exception as e:
-                     print(f"WARNING: Failed to load history for lag calculation: {e}")
+        #              # Concat
+        #              df_combined = pd.concat([df_history, df_new], axis=0, ignore_index=True)
+        #              print(f"DEBUG: Combined History ({len(df_history)}) + New ({len(df_new)}) = {len(df_combined)}")
+        #          except Exception as e:
+        #              print(f"WARNING: Failed to load history for lag calculation: {e}")
         
         # 3. Apply Transformations on Combined Data
         # Check for fitted transformers (Stateful Scaling)
@@ -387,3 +411,104 @@ def preview_inference_dataset(
     except Exception as e:
         print(f"Error previewing dataset: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to read dataset: {e}")
+@router.post("/preview_input")
+async def preview_model_input(
+    model_id: int = Form(...),
+    inference_dataset_id: int = Form(None),
+    file: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Preview the exact data that will be passed to the model for inference.
+    Includes all transformations, encoding, and type coercion.
+    """
+    try:
+        df = None
+        
+        # 1. Load Data
+        if inference_dataset_id:
+            dataset = db.query(models.InferenceDataset).filter(models.InferenceDataset.id == inference_dataset_id).first()
+            if not dataset:
+                raise HTTPException(status_code=404, detail="Inference Dataset not found")
+            try:
+                # Load parquet
+                df = pd.read_parquet(dataset.path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to load dataset file: {e}")
+        
+        elif file:
+            if not file.filename.endswith('.csv'):
+                raise HTTPException(status_code=400, detail="Only CSV files are supported for direct upload")
+            contents = await file.read()
+            df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        
+        else:
+            raise HTTPException(status_code=400, detail="Either inference_dataset_id or file must be provided")
+
+        # 2. Get Model & Features
+        # We need raw access to model object for prepare_input
+        loaded_model, feature_names, feature_set, objective = predictor._get_model_and_features(db, model_id)
+
+        # 3. Apply Feature Set Transformations (Auto-Transform)
+        skip_transform = False
+        if inference_dataset_id and 'dataset' in locals() and dataset and feature_set:
+             if dataset.feature_set_id == feature_set.id:
+                  print("DEBUG: Skipping preview transformation (Already Transformed)")
+                  skip_transform = True
+
+        if not skip_transform and feature_set and feature_set.path:
+            import os
+            import joblib
+            from app.core import feature_store
+            
+            pkl_path = feature_set.path.replace(".parquet", ".pkl")
+            if os.path.exists(pkl_path):
+                 try:
+                     transformers = joblib.load(pkl_path)
+                     df, _ = feature_store.apply_transformations(df, feature_set.transformations, fitted_transformers=transformers)
+                 except Exception as e:
+                     print(f"Warning: Failed to apply transformations: {e}")
+
+        if not feature_names:
+            feature_names = df.columns.tolist()
+
+        # 4. Prepare Input (The Core Logic)
+        X = predictor.prepare_input(loaded_model, df, feature_names, objective)
+        
+        # 5. Format for Response
+        # Convert to DataFrame if it's numpy
+        if isinstance(X, np.ndarray):
+             X_df = pd.DataFrame(X, columns=feature_names) # Assuming feature order logic in prepare_input matches
+        else:
+             X_df = X
+             
+        # Limit rows
+        preview_df = X_df.head(100)
+        
+        # Helper to safely serialize
+        def safe_serialize(val):
+            if pd.isna(val): return None
+            if isinstance(val, (np.int64, np.int32, np.int16, np.int8)): return int(val)
+            if isinstance(val, (np.float64, np.float32)): return float(val)
+            return str(val)
+
+        records = preview_df.to_dict(orient='records')
+        # Sanitize
+        clean_records = [{k: safe_serialize(v) for k, v in r.items()} for r in records]
+        
+        return {
+            "columns": list(X_df.columns),
+            "dtypes": {k: str(v) for k, v in X_df.dtypes.items()},
+            "data": clean_records,
+            "shape": X.shape
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        print(f"Preview Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")

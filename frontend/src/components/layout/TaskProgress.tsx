@@ -22,7 +22,7 @@ export function TaskProgress() {
 
     const fetchTasks = async () => {
         try {
-            const res = await api.get('/tasks/?limit=10');
+            const res = await api.get('/tasks?limit=10');
             const allTasks = res.data;
 
             const active = allTasks.filter((t: Task) => ['pending', 'running'].includes(t.status));
